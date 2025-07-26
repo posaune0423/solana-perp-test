@@ -6,13 +6,12 @@ import { logger } from "./utils";
 async function main() {
   try {
     logger.info("🚀 Starting Drift Protocol position fetch...");
-    const driftPositionsPromise = getDriftPositions(USER_ADDRESS);
+    const driftPositions = await getDriftPositions(USER_ADDRESS);
 
     logger.info("🚀 Starting Jupiter Protocol position fetch...");
-    const jupiterPositionsPromise = getJupiterPositions(USER_ADDRESS);
+    const jupiterPositions = await getJupiterPositions(USER_ADDRESS);
 
     // Combine all positions
-    const [driftPositions, jupiterPositions] = await Promise.all([driftPositionsPromise, jupiterPositionsPromise]);
     const allPositions = [...driftPositions, ...jupiterPositions];
 
     logger.info(`🎯 Found ${allPositions.length} open positions:`);

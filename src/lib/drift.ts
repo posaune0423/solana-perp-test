@@ -137,24 +137,28 @@ async function processPosition(position: PerpPosition, driftClient: DriftClient)
     const entryPrice = convertToNumber(calculateEntryPrice(position), QUOTE_PRECISION);
     const markPrice = convertToNumber(oracleData.price, QUOTE_PRECISION);
 
+    // Calculate position size in USD (notional value)
+    const positionSizeUsd = Math.abs(baseAmount) * markPrice;
+
     // Calculate leverage (notional value / margin)
-    const notionalValue = Math.abs(baseAmount) * markPrice;
+    const notionalValue = positionSizeUsd;
     const margin = Math.abs(quoteAmount);
     const leverage = margin > 0 ? notionalValue / margin : 0;
 
     logger.debug(
-      `✅ ${marketInfo.baseAssetSymbol}: $${entryPrice} → $${markPrice}, PnL: $${pnl}, Leverage: ${leverage.toFixed(2)}x`,
+      `✅ ${marketInfo.baseAssetSymbol}: $${entryPrice} → $${markPrice}, Size: $${positionSizeUsd.toFixed(2)}, PnL: $${pnl}, Leverage: ${leverage.toFixed(2)}x`,
     );
 
     return {
-      marketIndex,
       symbol: marketInfo.baseAssetSymbol,
-      size: Math.abs(baseAmount),
+      sizeUsd: positionSizeUsd,
+      baseAmount: Math.abs(baseAmount),
       direction,
       pnl,
       entryPrice,
       markPrice,
       leverage: Number(leverage.toFixed(2)),
+      protocolMarketId: marketIndex,
     };
   } catch (error) {
     const details = getErrorDetails(error);
