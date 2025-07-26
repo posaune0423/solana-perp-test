@@ -16,26 +16,14 @@ import {
   Wallet,
 } from "@drift-labs/sdk";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { RPC_URL } from "../constants";
+import type { Position } from "../types";
 import { getErrorDetails, logger } from "../utils";
-
-export interface Position {
-  marketIndex: number;
-  symbol: string;
-  size: number;
-  direction: "LONG" | "SHORT";
-  pnl: number;
-  entryPrice: number;
-  markPrice: number;
-  leverage: number;
-}
 
 /**
  * Get user positions from Drift protocol
  */
-export async function getDriftPositions(
-  userAddress: string,
-  rpcUrl: string = "https://api.mainnet-beta.solana.com",
-): Promise<Position[]> {
+export async function getDriftPositions(userAddress: string, rpcUrl: string = RPC_URL): Promise<Position[]> {
   logger.info(`🎯 Starting position fetch for: ${userAddress}`);
 
   // Initialize connection and client
