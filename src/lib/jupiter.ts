@@ -16,13 +16,22 @@ import { getErrorDetails, logger } from "../utils";
 // Constants
 // ========================================================================================
 
-/** CoinGecko API coin ID mapping for supported tokens */
-const COINGECKO_COIN_IDS = {
-  SOL: "solana",
-  BTC: "bitcoin",
-  ETH: "ethereum",
-  USDC: "usd-coin",
-  USDT: "tether",
+/** Token mint addresses for supported tokens */
+const TOKEN_MINTS = {
+  SOL: "So11111111111111111111111111111111111111112",
+  BTC: "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh", // Wrapped Bitcoin
+  ETH: "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs", // Wrapped Ethereum
+  USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+} as const;
+
+/** Token decimals for proper amount calculation */
+const TOKEN_DECIMALS = {
+  SOL: 9,
+  BTC: 8,
+  ETH: 8,
+  USDC: 6,
+  USDT: 6,
 } as const;
 
 /** Configuration constants */
@@ -33,6 +42,10 @@ const CONFIG = {
   LEVERAGE_PRECISION: 4,
   /** Offset for user address in position account data */
   USER_ADDRESS_OFFSET: 8,
+  /** Jupiter Quote API base URL */
+  JUPITER_QUOTE_API: "https://quote-api.jup.ag/v6/quote",
+  /** Slippage tolerance for quotes */
+  SLIPPAGE_BPS: 50,
 } as const;
 
 // ========================================================================================
@@ -101,43 +114,87 @@ function calculatePositionPnl(
 // ========================================================================================
 
 /**
- * Fetch current market price from CoinGecko API
+ * Fetch current market price from Jupiter Quote API
  * @param symbol Token symbol (e.g., "SOL", "BTC")
  * @returns Price fetch result with BN precision
  */
 async function fetchCurrentPrice(symbol: string): Promise<PriceFetchResult> {
   try {
-    const coinId = COINGECKO_COIN_IDS[symbol as keyof typeof COINGECKO_COIN_IDS];
+    // Get token mint and decimals
+    const inputMint = TOKEN_MINTS[symbol as keyof typeof TOKEN_MINTS];
+    const outputMint = TOKEN_MINTS.USDC; // Always quote against USDC
 
-    if (!coinId) {
-      logger.debug(`❌ Unsupported symbol for price fetch: ${symbol}`);
+    if (!inputMint) {
+      logger.debug(`❌ Unsupported token for price fetch: ${symbol}`);
       return { success: false, price: new BN(0), symbol };
     }
 
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
-    const response = await fetch(url);
+    // Skip price fetch for USDC (it's always 1.0)
+    if (symbol === "USDC") {
+      const usdcPrice = new BN(1 * 10 ** USDC_DECIMALS);
+      logger.debug(`💰 USDC price (fixed): $1.00 (BN: ${usdcPrice.toString()})`);
+      return { success: true, price: usdcPrice, symbol };
+    }
+
+    // Determine quote amount based on token
+    const tokenDecimals = TOKEN_DECIMALS[symbol as keyof typeof TOKEN_DECIMALS];
+    const quoteAmount = 10 ** tokenDecimals; // 1 token in smallest units
+
+    // Build Jupiter Quote API URL
+    const url = new URL(CONFIG.JUPITER_QUOTE_API);
+    url.searchParams.set("inputMint", inputMint);
+    url.searchParams.set("outputMint", outputMint);
+    url.searchParams.set("amount", quoteAmount.toString());
+    url.searchParams.set("slippageBps", CONFIG.SLIPPAGE_BPS.toString());
+
+    logger.debug(`🌐 Fetching ${symbol} price from Jupiter: ${url.toString()}`);
+
+    const response = await fetch(url.toString());
 
     if (!response.ok) {
-      logger.debug(`❌ CoinGecko API error: ${response.status} ${response.statusText}`);
+      logger.debug(`❌ Jupiter Quote API error: ${response.status} ${response.statusText}`);
       return { success: false, price: new BN(0), symbol };
     }
 
-    const data = (await response.json()) as Record<string, { usd?: number }>;
-    const usdPrice = data[coinId]?.usd;
+    const data = (await response.json()) as {
+      inAmount: string;
+      outAmount: string;
+      inputMint: string;
+      outputMint: string;
+    };
 
-    if (!usdPrice || usdPrice <= 0) {
-      logger.debug(`❌ Invalid price received for ${symbol}: ${usdPrice}`);
+    if (!data.outAmount || !data.inAmount) {
+      logger.debug(`❌ Invalid quote response for ${symbol}: missing amounts`);
       return { success: false, price: new BN(0), symbol };
     }
 
-    // Convert to BN with USDC precision (6 decimals)
-    const priceBN = new BN(Math.round(usdPrice * 10 ** USDC_DECIMALS));
+    // Calculate price: outAmount (USDC) / inAmount (token) * precision adjustment
+    const outAmount = new BN(data.outAmount); // USDC amount (6 decimals)
+    const inAmount = new BN(data.inAmount); // Token amount (token decimals)
 
-    logger.debug(`💰 Price fetched for ${symbol}: $${usdPrice} (BN: ${priceBN.toString()})`);
+    if (inAmount.isZero()) {
+      logger.debug(`❌ Zero input amount for ${symbol} quote`);
+      return { success: false, price: new BN(0), symbol };
+    }
+
+    // Price = (outAmount / inAmount) * (10^inputDecimals / 10^outputDecimals) * 10^USDC_DECIMALS
+    // Simplified: outAmount * 10^inputDecimals / inAmount (since output is already in USDC decimals)
+    const priceNumerator = outAmount.mul(new BN(10 ** tokenDecimals));
+    const priceBN = priceNumerator.div(inAmount);
+
+    // Convert to USD with USDC precision
+    const usdPrice = priceBN.toNumber() / 10 ** USDC_DECIMALS;
+
+    logger.debug(
+      `💰 Jupiter price for ${symbol}: $${usdPrice.toFixed(6)} ` +
+      `(${data.inAmount} ${symbol} → ${data.outAmount} USDC, BN: ${priceBN.toString()})`
+    );
+
     return { success: true, price: priceBN, symbol };
+
   } catch (error) {
     const details = getErrorDetails(error);
-    logger.debug(`❌ Price fetch exception for ${symbol}: ${details.message}`);
+    logger.debug(`❌ Jupiter price fetch exception for ${symbol}: ${details.message}`);
     return { success: false, price: new BN(0), symbol };
   }
 }
