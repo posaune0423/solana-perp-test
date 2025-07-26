@@ -1,33 +1,15 @@
 import * as anchor from "@coral-xyz/anchor";
 import {
-  BASE_PRECISION,
-  BN,
-  calculateEntryPrice,
-  calculatePositionPNL,
-  convertToNumber,
   DriftClient,
   getUserAccountPublicKey,
   initialize,
   isEmptyPosition,
-  PerpMarkets,
   type PerpPosition,
-  QUOTE_PRECISION,
   User,
   Wallet,
 } from "@drift-labs/sdk";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getErrorDetails, logger } from "../utils";
-
-export interface Position {
-  marketIndex: number;
-  symbol: string;
-  size: number;
-  direction: "LONG" | "SHORT";
-  pnl: number;
-  entryPrice: number;
-  markPrice: number;
-  leverage: number;
-}
 
 /**
  * Get user positions from Drift protocol
@@ -35,7 +17,7 @@ export interface Position {
 export async function getDriftPositions(
   userAddress: string,
   rpcUrl: string = "https://api.mainnet-beta.solana.com",
-): Promise<Position[]> {
+): Promise<PerpPosition[]> {
   logger.info(`🎯 Starting position fetch for: ${userAddress}`);
 
   let driftClient: DriftClient | undefined;
@@ -55,7 +37,7 @@ export async function getDriftPositions(
     // Get user data
     await user.subscribe();
     const userAccount = user.getUserAccount();
-    const positions = userAccount.perpPositions.filter((pos: PerpPosition) => !isEmptyPosition(pos));
+    const positions = userAccount.perpPositions.filter((pos) => !isEmptyPosition(pos));
 
     logger.info(`✅ Found ${positions.length} positions`);
 
@@ -63,17 +45,7 @@ export async function getDriftPositions(
       return [];
     }
 
-    // Process positions
-    const results: Position[] = [];
-    for (const position of positions) {
-      const processed = await processPosition(position, driftClient);
-      if (processed) {
-        results.push(processed);
-      }
-    }
-
-    logger.info(`🎉 Successfully processed ${results.length} positions`);
-    return results;
+    return positions;
   } catch (error) {
     const details = getErrorDetails(error);
     logger.error(`❌ Error: ${details.message}`);
@@ -119,65 +91,6 @@ async function createUser(driftClient: DriftClient, userAddress: string): Promis
     userAccountPublicKey: userAccountPubkey,
     accountSubscription: { type: "websocket" },
   });
-}
-
-/**
- * Process single position
- */
-async function processPosition(position: PerpPosition, driftClient: DriftClient): Promise<Position | null> {
-  try {
-    const marketIndex = position.marketIndex;
-    logger.debug(`🔍 Processing market ${marketIndex}`);
-
-    // Get market information
-    const marketInfo = PerpMarkets["mainnet-beta"].find((m) => m.marketIndex === marketIndex);
-    if (!marketInfo) {
-      logger.warn(`⚠️ Market info not found: ${marketIndex}`);
-      return null;
-    }
-
-    // Get price and account information
-    const marketAccount = driftClient.getPerpMarketAccount(marketIndex);
-    const oracleData = driftClient.getOracleDataForPerpMarket(marketIndex);
-
-    if (!marketAccount) {
-      logger.warn(`⚠️ Market account not found: ${marketIndex}`);
-      return null;
-    }
-
-    // Calculate position metrics
-    const baseAmount = convertToNumber(position.baseAssetAmount, BASE_PRECISION);
-    const quoteAmount = convertToNumber(position.quoteAssetAmount, QUOTE_PRECISION);
-    const direction = position.baseAssetAmount.gt(new BN(0)) ? "LONG" : "SHORT";
-
-    const pnl = convertToNumber(calculatePositionPNL(marketAccount, position, false, oracleData), QUOTE_PRECISION);
-    const entryPrice = convertToNumber(calculateEntryPrice(position), QUOTE_PRECISION);
-    const markPrice = convertToNumber(oracleData.price, QUOTE_PRECISION);
-
-    // Calculate leverage (notional value / margin)
-    const notionalValue = Math.abs(baseAmount) * markPrice;
-    const margin = Math.abs(quoteAmount);
-    const leverage = margin > 0 ? notionalValue / margin : 0;
-
-    logger.debug(
-      `✅ ${marketInfo.baseAssetSymbol}: $${entryPrice} → $${markPrice}, PnL: $${pnl}, Leverage: ${leverage.toFixed(2)}x`,
-    );
-
-    return {
-      marketIndex,
-      symbol: marketInfo.baseAssetSymbol,
-      size: Math.abs(baseAmount),
-      direction,
-      pnl,
-      entryPrice,
-      markPrice,
-      leverage: Number(leverage.toFixed(2)),
-    };
-  } catch (error) {
-    const details = getErrorDetails(error);
-    logger.error(`❌ Position processing error (market: ${position.marketIndex}): ${details.message}`);
-    return null;
-  }
 }
 
 /**
