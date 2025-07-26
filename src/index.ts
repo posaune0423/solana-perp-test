@@ -1,36 +1,30 @@
-import { RPC_URL, USER_ADDRESS } from "./constants";
+import { USER_ADDRESS } from "./constants";
 import { getDriftPositions } from "./lib/drift";
-import { handleFetchError, logger } from "./utils";
+import { getJupiterPositions } from "./lib/jupiter";
+import { logger } from "./utils";
 
-async function fetchDriftPositions() {
+async function main() {
   try {
-    // Get positions using simple API
-    const positions = await getDriftPositions(USER_ADDRESS, RPC_URL);
+    logger.info("🚀 Starting Drift Protocol position fetch...");
+    const driftPositionsPromise = getDriftPositions(USER_ADDRESS);
 
-    if (positions.length === 0) {
-      logger.info("📭 No open positions found");
-      return;
-    }
+    logger.info("🚀 Starting Jupiter Protocol position fetch...");
+    const jupiterPositionsPromise = getJupiterPositions(USER_ADDRESS);
 
-    logger.info(`🎯 Found ${positions.length} open positions:`);
+    // Combine all positions
+    const [driftPositions, jupiterPositions] = await Promise.all([driftPositionsPromise, jupiterPositionsPromise]);
+    const allPositions = [...driftPositions, ...jupiterPositions];
 
-    logger.info(positions);
+    logger.info(`🎯 Found ${allPositions.length} open positions:`);
+    logger.info(allPositions);
 
-    // Calculate total PnL
-    const totalPnl = positions.reduce((sum, pos) => sum + pos.pnl, 0);
+    // Calculate total unrealized PnL
+    const totalPnl = allPositions.reduce((sum, pos) => sum + pos.pnl, 0);
     logger.info(`\n💰 Total Unrealized PnL: $${totalPnl.toFixed(2)}`);
   } catch (error) {
-    handleFetchError(error);
+    logger.error("❌ Error in main:", error);
+    process.exit(1);
   }
 }
 
-async function main() {
-  logger.info("🚀 Starting Drift Protocol position fetch...");
-  await fetchDriftPositions();
-}
-
-main()
-  .catch(logger.error)
-  .finally(() => {
-    process.exit(0);
-  });
+main();
