@@ -1,0 +1,26 @@
+{
+  "name": "solana-perp-test",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun --env-file .env run src/index.ts",
+    "dev": "bun --env-file .env --watch src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts",
+    "lint": "biome check --write src",
+    "format": "biome format --write src"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.1.2",
+    "@types/bun": "latest",
+    "tsup": "^8.5.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@drift-labs/sdk": "^2.130.0-beta.1",
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/web3.js": "^1.95.4"
+  }
+}
